@@ -55,8 +55,13 @@ function grokError(status, raw) {
   let detail = '';
   try {
     const body = JSON.parse(raw);
-    detail = body?.error?.message || body?.message || '';
+    detail = body?.error?.message || body?.error || body?.message || '';
   } catch (_) { /* Use the status-specific fallback below. */ }
+  if (!detail && raw) {
+    // xAI occasionally returns a plain-text/HTML gateway error instead of a
+    // JSON error object. Make it visible without returning a huge page.
+    detail = raw.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  }
   if (detail) return `Grok rejected the request: ${String(detail).slice(0, 300)}`;
   if (status === 401 || status === 403) return 'Grok authentication failed. Check that XAI_API_KEY is a valid, active key from console.x.ai.';
   if (status === 413) return 'The uploaded image is too large for Grok. Try a smaller image.';
@@ -85,8 +90,7 @@ async function createRollInsights(images) {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
       model: process.env.XAI_MODEL || 'grok-4.5',
-      messages: [{ role: 'user', content }],
-      max_completion_tokens: 300
+      messages: [{ role: 'user', content }]
     })
   });
   const raw = await upstream.text();
