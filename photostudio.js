@@ -498,24 +498,31 @@
     });
   }
 
-  // A restrained warm film treatment: clearer midtones, gently warmer
-  // highlights, and slightly cooler shadows. It gives uploads a finished
-  // social-ready look without making skin tones or skies look artificial.
+  // Cinematic film treatment: matte blacks, warm highlights, cool shadows,
+  // and a soft edge vignette. The grade is intentionally restrained so faces
+  // remain natural while uploads gain a polished photography look.
   function applyFilmTone(imageData){
-    const data = imageData.data;
-    for(let i=0; i<data.length; i+=4){
+    const { data, width:w, height:h } = imageData;
+    const cx = (w - 1) / 2, cy = (h - 1) / 2;
+    const maxDist = Math.sqrt(cx*cx + cy*cy) || 1;
+    for(let y=0; y<h; y++){
+      for(let x=0; x<w; x++){
+      const i = (y*w + x)*4;
       let r = data[i], g = data[i+1], b = data[i+2];
       const lum = 0.299*r + 0.587*g + 0.114*b;
       const shadow = Math.max(0, (105-lum)/105);
       const highlight = Math.max(0, (lum-150)/105);
-      r += 2.5*highlight - 1.2*shadow;
-      g += 0.8*highlight;
-      b += 1.5*shadow - 1.5*highlight;
+      // Lift black point slightly, cool the shadows, and add amber warmth to highlights.
+      r = r*0.975 + 3.5 + 4.5*highlight - 1.5*shadow;
+      g = g*0.98 + 2.5 + 1.8*highlight + 0.8*shadow;
+      b = b*0.975 + 3 + 2.8*shadow - 2.2*highlight;
       const tonedLum = 0.299*r + 0.587*g + 0.114*b;
-      const saturation = 1.035;
-      data[i] = clampByte(tonedLum + (r-tonedLum)*saturation);
-      data[i+1] = clampByte(tonedLum + (g-tonedLum)*saturation);
-      data[i+2] = clampByte(tonedLum + (b-tonedLum)*saturation);
+      const saturation = 1.045;
+      const vignette = 1 - 0.13*Math.pow(Math.sqrt((x-cx)*(x-cx) + (y-cy)*(y-cy))/maxDist, 1.65);
+      data[i] = clampByte((tonedLum + (r-tonedLum)*saturation) * vignette);
+      data[i+1] = clampByte((tonedLum + (g-tonedLum)*saturation) * vignette);
+      data[i+2] = clampByte((tonedLum + (b-tonedLum)*saturation) * vignette);
+      }
     }
   }
 
