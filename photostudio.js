@@ -102,7 +102,6 @@
         renderFilmstrip();
         if(!queue.length) setQueueVisible(false);
         // fire caption request (non-blocking for the queue, but sequential is fine here since it's fast)
-        requestCaption(card);
       }catch(err){
         console.error(err);
         showToast('Could not develop that frame — skipping.');
@@ -309,7 +308,7 @@
         <input type="range" min="0" max="100" value="50" class="slider">
       </div>
       <div class="card-body">
-        <div class="caption-loading"><span class="dot">●</span><span class="dot">●</span><span class="dot">●</span> writing caption</div>
+        <div class="caption-loading">Group caption and soundtrack are generated from the complete roll above.</div>
         <div style="display:flex;gap:8px;align-items:center;">
           <label style="font-size:12px;color:var(--ink-dim);">Lighting:</label>
           <input type="range" min="-40" max="40" value="0" class="lighting-range" aria-label="Lighting adjust">
@@ -320,14 +319,6 @@
           <button class="btn download-btn">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12M12 15l-4-4M12 15l4-4"/><path d="M4 18v1a2 2 0 002 2h12a2 2 0 002-2v-1"/></svg>
             Save
-          </button>
-          <button class="btn copy-btn">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="8" width="12" height="12" rx="1.5"/><path d="M4 15V5a2 2 0 012-2h10"/></svg>
-            Copy caption
-          </button>
-          <button class="btn regen-btn">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 12a8 8 0 0113.9-5.4M20 12a8 8 0 01-13.9 5.4"/><path d="M17 3v5h-5M7 21v-5h5"/></svg>
-            Re-caption
           </button>
         </div>
       </div>
@@ -356,15 +347,6 @@
       showToast('Saved.');
     });
 
-    // copy caption
-    card.querySelector('.copy-btn').addEventListener('click', ()=>{
-      const box = card.querySelector('.caption-box');
-      const tags = card.querySelector('.hashtags');
-      const text = (box ? box.value : '') + (tags ? ('\n\n' + tags.textContent) : '');
-      navigator.clipboard.writeText(text.trim()).then(()=> showToast('Caption copied.'))
-        .catch(()=> showToast('Could not copy — select the text manually.'));
-    });
-
     card._enhancedUrl = enhancedUrl;
     card._mime = mime;
     // lighting controls: apply a lightweight exposure/balance adjust on the enhanced image
@@ -384,40 +366,8 @@
     return card;
   }
 
-  // ---------- caption generation via Claude ----------
-  async function requestCaption(card){
-    const body = card.querySelector('.caption-loading');
-    if(!body) return;
-    try{
-      const { caption, hashtags } = await getCaption(card._enhancedUrl, card._mime);
-      body.outerHTML = `
-        <textarea class="caption-box" spellcheck="false">${escapeHtml(caption)}</textarea>
-        <div class="hashtags">${escapeHtml(hashtags)}</div>
-      `;
-    }catch(err){
-      console.error(err);
-      body.outerHTML = `
-        <textarea class="caption-box" spellcheck="false" placeholder="Write your own caption…"></textarea>
-        <div class="caption-error">Couldn't reach the caption model — write your own, or hit Re-caption to retry.</div>
-      `;
-    }
-    // wire re-caption button now that caption exists
-    const regenBtn = card.querySelector('.regen-btn');
-    regenBtn.onclick = async ()=>{
-      const loadingHtml = `<div class="caption-loading"><span class="dot">●</span><span class="dot">●</span><span class="dot">●</span> writing caption</div>`;
-      const box = card.querySelector('.caption-box');
-      const tags = card.querySelector('.hashtags');
-      const err = card.querySelector('.caption-error');
-      if(box) box.outerHTML = loadingHtml;
-      else if(err){ err.parentElement.insertAdjacentHTML('afterbegin', loadingHtml); }
-      if(tags) tags.remove();
-      if(err) err.remove();
-      await requestCaption(card);
-    };
-  }
-
   // ---------- one song for the whole roll (group, not per-photo) ----------
-  const MAX_PHOTOS_FOR_SONG = 10; // keep the request light — a representative sample is enough
+  const MAX_PHOTOS_FOR_SONG = 8; // representative sample, within the server and API payload limit
 
   function pickSample(list, max){
     if(list.length <= max) return list;
@@ -436,9 +386,11 @@
       <div class="mixtape-loading"><span class="dot">●</span><span class="dot">●</span><span class="dot">●</span> picking a song for the whole set</div>
     `;
     try{
-      const { song, artist, reason } = await getGroupSong(pickSample(developedPhotos, MAX_PHOTOS_FOR_SONG));
+      const { caption, hashtags, song, artist, reason } = await getGroupSong(pickSample(developedPhotos, MAX_PHOTOS_FOR_SONG));
       mixtapeBody.innerHTML = `
         <p class="mixtape-eyebrow">soundtrack for this roll · ${developedPhotos.length} photo${developedPhotos.length===1?'':'s'}</p>
+        <textarea class="caption-box roll-caption" aria-label="Group caption" spellcheck="false">${escapeHtml(caption)}</textarea>
+        <div class="hashtags">${escapeHtml(hashtags)}</div>
         <p class="mixtape-song">${escapeHtml(song)} <span class="artist">— ${escapeHtml(artist)}</span></p>
         <p class="mixtape-reason">${escapeHtml(reason)}</p>
       `;
@@ -458,51 +410,6 @@
     });
   }
 
-  function getApiConfig(){
-    return {
-      provider: 'groq',
-      key: ''
-    };
-  }
-
-  async function callVisionApi(prompt, imageDataUrl, mime){
-    const { provider, key } = getApiConfig();
-    if(provider === 'local' || !key) throw new Error('No API key');
-
-    const base64 = imageDataUrl.split(',')[1];
-    const endpoint = provider === 'groq'
-      ? 'https://api.groq.com/openai/v1/chat/completions'
-      : 'https://api.x.ai/v1/chat/completions';
-    const model = provider === 'groq' ? 'llama-3.2-90b-vision-preview' : 'grok-2-latest';
-
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${key}`
-      },
-      body: JSON.stringify({
-        model,
-        temperature: 0.7,
-        max_tokens: 280,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'text', text: prompt },
-            { type: 'image_url', image_url: { url: `data:${mime};base64,${base64}`, detail: 'high' } }
-          ]
-        }]
-      })
-    });
-
-    if(!response.ok) throw new Error('API error ' + response.status);
-    const data = await response.json();
-    const content = data?.choices?.[0]?.message?.content;
-    if(typeof content === 'string') return content.trim();
-    if(Array.isArray(content)) return content.map(item => item.type === 'text' ? item.text : '').join('\n').trim();
-    throw new Error('Unexpected API response');
-  }
-
   async function getGroupSong(photos){
     const count = photos.length;
     const fallbackSong = count >= 5 ? 'Gallan Goodiyan' : 'Phir Aur Kya Chahiye';
@@ -512,17 +419,24 @@
       : 'Warm and nostalgic, fitting a cozy memory-filled set.';
 
     try{
-      const prompt = `You are picking a song for a friend-group photo roll. Reply with exactly three lines and nothing else. Line 1: Hindi song title only. Line 2: artist name only. Line 3: one short reason in English or Hindi, max 16 words.`;
-      const text = await callVisionApi(prompt, photos[0]?.dataUrl || '', photos[0]?.mime || 'image/jpeg');
-      const lines = text.split('\n').map(l=>l.trim()).filter(Boolean);
+      const images = await Promise.all(photos.map(photo => resizeForAnalysis(photo.dataUrl)));
+      const response = await fetch('/api/roll-insights', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ images })
+      });
+      if(!response.ok) throw new Error('Insights request failed');
+      const result = await response.json();
       return {
-        song: lines[0] || fallbackSong,
-        artist: lines[1] || fallbackArtist,
-        reason: lines[2] || fallbackReason
+        caption: result.caption || 'A little glow, a lot of memories, and a whole lot of heart.',
+        hashtags: result.hashtags || '#photoDump #yaadein #friendsForever #mood #capturedMoments',
+        song: result.song || fallbackSong,
+        artist: result.artist || fallbackArtist,
+        reason: result.reason || fallbackReason
       };
     }catch(err){
       console.warn('API song generation failed, using fallback', err);
-      return { song: fallbackSong, artist: fallbackArtist, reason: fallbackReason };
+      return { caption: 'A little glow, a lot of memories, and a whole lot of heart.', hashtags: '#photoDump #yaadein #friendsForever #mood #capturedMoments', song: fallbackSong, artist: fallbackArtist, reason: fallbackReason };
     }
   }
 
@@ -532,22 +446,20 @@
     return d.innerHTML;
   }
 
-  async function getCaption(dataUrl, mime){
-    const fallbackCaption = 'A little glow, a lot of memories, and a whole lot of heart.';
-    const fallbackHashtags = '#photoDump #yaadein #friendsForever #mood #capturedMoments';
-
-    try{
-      const prompt = `You are writing a social caption for a friend-group photo. Reply with exactly two lines and nothing else. Line 1: a warm, expressive caption in Hindi or Hinglish, 16 to 22 words, emotionally rich. Line 2: 6 to 8 hashtags, all starting with #.`;
-      const text = await callVisionApi(prompt, dataUrl, mime);
-      const lines = text.split('\n').map(l=>l.trim()).filter(Boolean);
-      return {
-        caption: lines[0] || fallbackCaption,
-        hashtags: lines[1] || fallbackHashtags
+  function resizeForAnalysis(dataUrl){
+    return new Promise((resolve, reject)=>{
+      const img = new Image();
+      img.onload = ()=>{
+        const scale = Math.min(1, 960 / Math.max(img.width, img.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(img.width * scale));
+        canvas.height = Math.max(1, Math.round(img.height * scale));
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', 0.82));
       };
-    }catch(err){
-      console.warn('API caption generation failed, using fallback', err);
-      return { caption: fallbackCaption, hashtags: fallbackHashtags };
-    }
+      img.onerror = reject;
+      img.src = dataUrl;
+    });
   }
 
 })();
