@@ -184,6 +184,7 @@
     ctx.filter = 'none';
 
     const imageData = ctx.getImageData(0, 0, w, h);
+    autoWhiteBalance(imageData);
     autoLevels(imageData);
     liftShadowsAndPop(imageData);
     applyFilmTone(imageData);
@@ -195,6 +196,31 @@
   }
 
   function clampByte(v){ return v<0 ? 0 : v>255 ? 255 : v; }
+
+  // A subtle gray-world white balance correction removes common indoor color
+  // casts while limiting the correction so intentional warm/cool scenes keep
+  // their character.
+  function autoWhiteBalance(imageData){
+    const data = imageData.data;
+    let rTotal=0, gTotal=0, bTotal=0, count=0;
+    for(let i=0; i<data.length; i+=4){
+      const lum = .299*data[i] + .587*data[i+1] + .114*data[i+2];
+      if(lum > 20 && lum < 235){
+        rTotal += data[i]; gTotal += data[i+1]; bTotal += data[i+2]; count++;
+      }
+    }
+    if(!count) return;
+    const average = (rTotal + gTotal + bTotal) / (3*count);
+    const limit = value => Math.max(.93, Math.min(1.07, value));
+    const rScale = limit(average / (rTotal/count));
+    const gScale = limit(average / (gTotal/count));
+    const bScale = limit(average / (bTotal/count));
+    for(let i=0; i<data.length; i+=4){
+      data[i] = clampByte(data[i] * rScale);
+      data[i+1] = clampByte(data[i+1] * gScale);
+      data[i+2] = clampByte(data[i+2] * bScale);
+    }
+  }
 
   // Stretches each channel's histogram to use the full 0-255 range,
   // clipping the darkest/brightest 0.5% as outliers — this is what actually
@@ -232,6 +258,10 @@
       let r = 255*Math.pow(data[i]/255, gamma) + lift;
       let g = 255*Math.pow(data[i+1]/255, gamma) + lift;
       let b = 255*Math.pow(data[i+2]/255, gamma) + lift;
+      // Softly compress the very brightest values instead of clipping them.
+      r = r > 225 ? 225 + (r-225)*.55 : r;
+      g = g > 225 ? 225 + (g-225)*.55 : g;
+      b = b > 225 ? 225 + (b-225)*.55 : b;
       const lum = 0.299*r + 0.587*g + 0.114*b;
       data[i]   = clampByte(lum + (r-lum)*sat);
       data[i+1] = clampByte(lum + (g-lum)*sat);
@@ -253,7 +283,11 @@
             }
           }
           const idx = (y*w+x)*4+c;
-          data[idx] = src[idx]*(1-amount) + sum*amount;
+          const difference = sum - src[idx];
+          // Apply most sharpening to real edges and very little to flat areas,
+          // which keeps skin, skies, and low-light regions from becoming noisy.
+          const edgeStrength = Math.min(1, Math.abs(difference) / 20);
+          data[idx] = src[idx] + difference*amount*edgeStrength;
         }
       }
     }
