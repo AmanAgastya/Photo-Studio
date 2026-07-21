@@ -20,6 +20,7 @@
   let captionDirection = '';
   const MAX_PHOTOS_PER_ROLL = 10;
   const IMAGE_FILENAME = /\.(avif|bmp|gif|heic|heif|jpe?g|png|webp)$/i;
+  const HEIC_FILENAME = /\.(heic|heif)$/i;
 
   function showToast(msg){
     if(!toastEl) return;
@@ -108,7 +109,8 @@
       item.status = 'processing';
       renderFilmstrip();
       try{
-        const { originalUrl, enhancedUrl, mime, width, height, usedOriginal } = await enhanceImage(item.file);
+        const sourceFile = await prepareImageFile(item.file);
+        const { originalUrl, enhancedUrl, mime, width, height, usedOriginal } = await enhanceImage(sourceFile);
         frameNumber++;
         const card = addCard(frameNumber, originalUrl, enhancedUrl, mime, item.file.name, width, height);
         developedPhotos.push({ dataUrl: enhancedUrl, mime });
@@ -133,6 +135,27 @@
   }
 
   // ---------- enhancement pipeline ----------
+  function isHeic(file){
+    return /image\/(heic|heif)/i.test(file.type || '') || HEIC_FILENAME.test(file.name || '');
+  }
+
+  async function prepareImageFile(file){
+    if(!isHeic(file)) return file;
+    if(typeof window.heic2any !== 'function'){
+      throw new Error('The HEIC converter did not load. Check the network connection and retry.');
+    }
+    // Convert locally—nothing is uploaded for this step—then send the JPEG
+    // through the same high-resolution enhancement path as every other photo.
+    const converted = await window.heic2any({ blob:file, toType:'image/jpeg', quality:0.96 });
+    const jpegBlob = Array.isArray(converted) ? converted[0] : converted;
+    if(!(jpegBlob instanceof Blob) || !jpegBlob.size) throw new Error('Could not convert HEIC image');
+    const baseName = file.name.replace(HEIC_FILENAME, '') || 'photo';
+    return new File([jpegBlob], `${baseName}.jpg`, {
+      type:'image/jpeg',
+      lastModified:file.lastModified || Date.now()
+    });
+  }
+
   function loadImage(file){
     // Use a data URL (FileReader) rather than URL.createObjectURL — blob URLs
     // can silently fail to load inside the sandboxed artifact frame, which
