@@ -46,12 +46,12 @@ function parseInsightJson(text) {
   try { return JSON.parse(clean); }
   catch (_) {
     const match = clean.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error('Grok did not return JSON insights');
+    if (!match) throw new Error('The AI provider did not return JSON insights');
     return JSON.parse(match[0]);
   }
 }
 
-function grokError(status, raw) {
+function providerError(provider, status, raw) {
   let detail = '';
   try {
     const body = JSON.parse(raw);
@@ -62,20 +62,38 @@ function grokError(status, raw) {
     // JSON error object. Make it visible without returning a huge page.
     detail = raw.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
   }
-  if (detail) return `Grok rejected the request: ${String(detail).slice(0, 300)}`;
-  if (status === 401 || status === 403) return 'Grok authentication failed. Check that XAI_API_KEY is a valid, active key from console.x.ai.';
-  if (status === 413) return 'The uploaded image is too large for Grok. Try a smaller image.';
-  if (status === 429) return 'Grok rate limit or account quota reached. Please try again shortly.';
-  if (status === 404) return 'The configured Grok model is unavailable. Check XAI_MODEL or remove it to use grok-4.5.';
-  return `Grok API request failed (${status}). Check the server logs for details.`;
+  if (detail) return `${provider} rejected the request: ${String(detail).slice(0, 300)}`;
+  if (status === 401 || status === 403) return `${provider} authentication failed. Check its API key in the deployment environment variables.`;
+  if (status === 413) return `The uploaded image is too large for ${provider}. Try a smaller image.`;
+  if (status === 429) return `${provider} rate limit or account quota reached. Please try again shortly.`;
+  if (status === 404) return `The configured ${provider} model is unavailable. Check the model environment variable.`;
+  return `${provider} API request failed (${status}). Check the server logs for details.`;
 }
 
 async function createRollInsights(images) {
-  const apiKey = process.env.XAI_API_KEY;
-  if (!apiKey) throw new Error('Missing XAI_API_KEY on the server');
+  // This project already has a GROQ_API_KEY. Prefer it because it cannot be
+  // used with xAI/Grok, then support XAI_API_KEY when an xAI key is supplied.
+  // A previous setup placed a Groq gsk_ key in XAI_API_KEY; accept that legacy
+  // configuration too, so the browser upload works without exposing a key.
+  const groqKey = process.env.GROQ_API_KEY || (/^gsk_/.test(process.env.XAI_API_KEY || '') ? process.env.XAI_API_KEY : '');
+  const xaiKey = groqKey ? '' : process.env.XAI_API_KEY;
+  const config = groqKey ? {
+    provider: 'Groq',
+    apiKey: groqKey,
+    endpoint: 'https://api.groq.com/openai/v1/chat/completions',
+    model: process.env.GROQ_MODEL || 'qwen/qwen3.6-27b',
+    jsonMode: true
+  } : xaiKey ? {
+    provider: 'Grok',
+    apiKey: xaiKey,
+    endpoint: 'https://api.x.ai/v1/chat/completions',
+    model: process.env.XAI_MODEL || 'grok-4.5',
+    jsonMode: false
+  } : null;
+  if (!config) throw new Error('Missing GROQ_API_KEY or XAI_API_KEY on the server');
 
-  // Grok accepts base64 image data URLs directly. Keep this payload entirely
-  // server-side so the xAI key is never exposed to the browser.
+  // Both supported APIs accept base64 image data URLs. The key remains on the
+  // server and is never included in browser code.
   const content = images.map(image => ({
     type: 'image_url',
     image_url: { url: image, detail: 'high' }
@@ -85,26 +103,27 @@ async function createRollInsights(images) {
     text: 'Analyze these images as one photo roll. Return ONLY one valid JSON object with these string fields: caption (warm Hinglish or Hindi social caption, 16-26 words), hashtags (6-8 space-separated hashtags), song (a real Hindi song title), artist (artist name), and reason (16 words maximum). Make one cohesive recommendation for the complete set. Do not use markdown or add any text outside the JSON object.'
   });
 
-  const upstream = await fetch('https://api.x.ai/v1/chat/completions', {
+  const upstream = await fetch(config.endpoint, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
     body: JSON.stringify({
-      model: process.env.XAI_MODEL || 'grok-4.5',
-      messages: [{ role: 'user', content }]
+      model: config.model,
+      messages: [{ role: 'user', content }],
+      ...(config.jsonMode ? { response_format: { type: 'json_object' }, max_completion_tokens: 300 } : {})
     })
   });
   const raw = await upstream.text();
   if (!upstream.ok) {
-    console.error('Grok upstream response:', upstream.status, raw.slice(0, 500));
-    throw new Error(grokError(upstream.status, raw));
+    console.error(`${config.provider} upstream response:`, upstream.status, raw.slice(0, 500));
+    throw new Error(providerError(config.provider, upstream.status, raw));
   }
   let responseData;
   try { responseData = JSON.parse(raw); }
-  catch (_) { throw new Error('Grok returned an unreadable response'); }
+  catch (_) { throw new Error(`${config.provider} returned an unreadable response`); }
   const text = responseData.choices?.[0]?.message?.content || '';
-  if (!text) throw new Error('Grok returned an empty response');
+  if (!text) throw new Error(`${config.provider} returned an empty response`);
   const result = parseInsightJson(text);
-  if (!result.caption || !result.song || !result.artist) throw new Error('Grok returned an incomplete result');
+  if (!result.caption || !result.song || !result.artist) throw new Error(`${config.provider} returned an incomplete result`);
   return result;
 }
 
@@ -126,9 +145,9 @@ async function handler(req, res) {
       return sendJson(res, 200, await createRollInsights(images));
     } catch (error) {
       console.error('Roll insights error:', error.message);
-      const isConfigError = error.message.startsWith('Missing XAI_API_KEY');
+      const isConfigError = error.message.startsWith('Missing GROQ_API_KEY or XAI_API_KEY');
       return sendJson(res, isConfigError ? 500 : 502, {
-        error: isConfigError ? 'Grok is not configured. Add XAI_API_KEY in your deployment environment variables.' : error.message
+        error: isConfigError ? 'No AI key is configured. Add GROQ_API_KEY or XAI_API_KEY in your deployment environment variables.' : error.message
       });
     }
   }
