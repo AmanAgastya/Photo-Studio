@@ -105,9 +105,9 @@
       item.status = 'processing';
       renderFilmstrip();
       try{
-        const { originalUrl, enhancedUrl, mime } = await enhanceImage(item.file);
+        const { originalUrl, enhancedUrl, mime, width, height } = await enhanceImage(item.file);
         frameNumber++;
-        const card = addCard(frameNumber, originalUrl, enhancedUrl, mime, item.file.name);
+        const card = addCard(frameNumber, originalUrl, enhancedUrl, mime, item.file.name, width, height);
         developedPhotos.push({ dataUrl: enhancedUrl, mime });
         // remove from queue once handed to contact sheet
         const idx = queue.indexOf(item);
@@ -192,7 +192,7 @@
     ctx.putImageData(imageData, 0, 0);
 
     const enhancedUrl = canvas.toDataURL('image/jpeg', 0.98);
-    return { originalUrl, enhancedUrl, mime:'image/jpeg' };
+    return { originalUrl, enhancedUrl, mime:'image/jpeg', width:w, height:h };
   }
 
   function clampByte(v){ return v<0 ? 0 : v>255 ? 255 : v; }
@@ -342,13 +342,16 @@
   }
 
   // ---------- contact sheet cards ----------
-  function addCard(num, originalUrl, enhancedUrl, mime, filename){
+  function addCard(num, originalUrl, enhancedUrl, mime, filename, width, height){
     if(emptyNote) emptyNote.style.display = 'none';
     if(frameCountEl) frameCountEl.textContent = num;
 
     const card = document.createElement('div');
     card.className = 'frame-card';
     card.dataset.filename = filename.replace(/\.[^.]+$/, '') || ('frame-' + num);
+    // Keep the comparison frame aligned to the source photo. A fixed 4:3
+    // frame cropped portrait, square, and panoramic uploads via object-fit.
+    if(width > 0 && height > 0) card.style.setProperty('--photo-aspect-ratio', `${width} / ${height}`);
 
     card.innerHTML = `
       <div class="compare">

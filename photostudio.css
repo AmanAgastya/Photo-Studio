@@ -138,8 +138,10 @@ h1.brand span{ color:var(--amber); }
 }
 @keyframes rise{ from{ opacity:0; transform:translateY(14px);} to{opacity:1; transform:none;} }
 
-.compare{ position:relative; aspect-ratio: 4/3; background:#0d0b0a; overflow:hidden; }
-.compare img{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:block; user-select:none; -webkit-user-drag:none; }
+.compare{ position:relative; aspect-ratio:var(--photo-aspect-ratio, 4 / 3); background:#0d0b0a; overflow:hidden; }
+/* The box uses the upload's aspect ratio, so both images fill it without
+   cropping meaningful parts of portrait, square, or panoramic photos. */
+.compare img{ position:absolute; inset:0; width:100%; height:100%; object-fit:contain; display:block; user-select:none; -webkit-user-drag:none; }
 .compare .after-img{ clip-path: inset(0 0 0 0); }
 .compare .divider{
   position:absolute; top:0; bottom:0; width:2px; background:var(--paper);
