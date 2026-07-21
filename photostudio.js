@@ -151,15 +151,17 @@
     let { width, height } = img;
     const longSide = Math.max(width, height);
 
-    // Increase the effective output resolution while keeping the export lightweight.
-    let scale = 1;
-    if(longSide < 1200) scale = 2.2;
-    else if(longSide < 1800) scale = 1.8;
-    else if(longSide < 2400) scale = 1.35;
-    else scale = 1.1;
-
-    const w = Math.round(width * scale);
-    const h = Math.round(height * scale);
+    // Export every frame at an HD-ready size. Small uploads are upscaled to
+    // at least 1920px on the long edge; very large uploads are kept detailed
+    // without creating a browser-freezing canvas.
+    const targetLongSide = Math.max(1920, Math.min(2560, longSide));
+    let scale = targetLongSide / longSide;
+    const MAX_OUTPUT_PIXELS = 8 * 1024 * 1024;
+    if(width * height * scale * scale > MAX_OUTPUT_PIXELS){
+      scale = Math.sqrt(MAX_OUTPUT_PIXELS / (width * height));
+    }
+    const w = Math.max(1, Math.round(width * scale));
+    const h = Math.max(1, Math.round(height * scale));
 
     // original preview (same size, for a fair before/after comparison)
     const origCanvas = document.createElement('canvas');
@@ -177,17 +179,18 @@
     const ctx = canvas.getContext('2d');
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
-    ctx.filter = 'contrast(1.03) saturate(1.04) brightness(0.985)';
+    ctx.filter = 'contrast(1.045) saturate(1.08) brightness(1.015)';
     ctx.drawImage(img, 0, 0, w, h);
     ctx.filter = 'none';
 
     const imageData = ctx.getImageData(0, 0, w, h);
     autoLevels(imageData);
     liftShadowsAndPop(imageData);
-    sharpen(imageData, 0.38);
+    applyFilmTone(imageData);
+    sharpen(imageData, 0.28);
     ctx.putImageData(imageData, 0, 0);
 
-    const enhancedUrl = canvas.toDataURL('image/jpeg', 0.97);
+    const enhancedUrl = canvas.toDataURL('image/jpeg', 0.98);
     return { originalUrl, enhancedUrl, mime:'image/jpeg' };
   }
 
@@ -493,6 +496,27 @@
       img.onerror = reject;
       img.src = dataUrl;
     });
+  }
+
+  // A restrained warm film treatment: clearer midtones, gently warmer
+  // highlights, and slightly cooler shadows. It gives uploads a finished
+  // social-ready look without making skin tones or skies look artificial.
+  function applyFilmTone(imageData){
+    const data = imageData.data;
+    for(let i=0; i<data.length; i+=4){
+      let r = data[i], g = data[i+1], b = data[i+2];
+      const lum = 0.299*r + 0.587*g + 0.114*b;
+      const shadow = Math.max(0, (105-lum)/105);
+      const highlight = Math.max(0, (lum-150)/105);
+      r += 2.5*highlight - 1.2*shadow;
+      g += 0.8*highlight;
+      b += 1.5*shadow - 1.5*highlight;
+      const tonedLum = 0.299*r + 0.587*g + 0.114*b;
+      const saturation = 1.035;
+      data[i] = clampByte(tonedLum + (r-tonedLum)*saturation);
+      data[i+1] = clampByte(tonedLum + (g-tonedLum)*saturation);
+      data[i+2] = clampByte(tonedLum + (b-tonedLum)*saturation);
+    }
   }
 
   function createAnalysisCollage(photos){
