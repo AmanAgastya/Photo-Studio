@@ -401,7 +401,7 @@
       <div class="mixtape-loading"><span class="dot">●</span><span class="dot">●</span><span class="dot">●</span> writing a caption and picking a song for this ${photos.length === 1 ? 'photo' : 'set'}</div>
     `;
     try{
-      const { caption, hashtags, song, artist, reason } = await getGroupSong(pickSample(photos, MAX_PHOTOS_FOR_SONG), captionDirection);
+      const { caption, hashtags, song, artist, reason, preview } = await getGroupSong(pickSample(photos, MAX_PHOTOS_FOR_SONG), captionDirection);
       if(batchId !== activeBatchId) return;
       mixtapeBody.innerHTML = `
         <p class="mixtape-eyebrow">caption + soundtrack · ${photos.length} photo${photos.length===1?'':'s'}</p>
@@ -413,6 +413,11 @@
         </div>
         <div class="hashtags">${escapeHtml(hashtags)}</div>
         <p class="mixtape-song">${escapeHtml(song)} <span class="artist">— ${escapeHtml(artist)}</span></p>
+        <div class="music-player" ${preview ? '' : 'hidden'}>
+          <span class="preview-label">30 sec preview · courtesy of iTunes</span>
+          <audio class="song-preview" controls preload="none"></audio>
+          <a class="preview-link" target="_blank" rel="noopener">Open song</a>
+        </div>
         <p class="mixtape-reason">${escapeHtml(reason)}</p>
       `;
       const directionInput = mixtapeBody.querySelector('.caption-style-input');
@@ -428,6 +433,13 @@
           directionButton.click();
         }
       });
+      if(preview){
+        const audio = mixtapeBody.querySelector('.song-preview');
+        const link = mixtapeBody.querySelector('.preview-link');
+        audio.src = preview.previewUrl;
+        if(preview.trackUrl) link.href = preview.trackUrl;
+        else link.hidden = true;
+      }
     }catch(err){
       console.error(err);
       if(batchId !== activeBatchId) return;

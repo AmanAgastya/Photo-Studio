@@ -114,6 +114,32 @@ function providerError(provider, status, raw) {
   return `${provider} API request failed (${status}). Check the server logs for details.`;
 }
 
+async function findMusicPreview(song, artist) {
+  try {
+    const params = new URLSearchParams({
+      term: `${song} ${artist}`,
+      media: 'music',
+      entity: 'song',
+      country: 'IN',
+      limit: '5'
+    });
+    const response = await fetch(`https://itunes.apple.com/search?${params}`);
+    if (!response.ok) return null;
+    const data = await response.json();
+    const track = (data.results || []).find(item => typeof item.previewUrl === 'string' && /^https:\/\//.test(item.previewUrl));
+    if (!track) return null;
+    return {
+      previewUrl: track.previewUrl,
+      trackUrl: typeof track.trackViewUrl === 'string' && /^https:\/\//.test(track.trackViewUrl) ? track.trackViewUrl : '',
+      trackName: track.trackName || song,
+      artistName: track.artistName || artist
+    };
+  } catch (_) {
+    // A music preview is optional; never block caption generation for it.
+    return null;
+  }
+}
+
 async function createRollInsights(images, captionPreference = '') {
   // This project already has a GROQ_API_KEY. Prefer it because it cannot be
   // used with xAI/Grok, then support XAI_API_KEY when an xAI key is supplied.
@@ -170,7 +196,8 @@ async function createRollInsights(images, captionPreference = '') {
   if (!text) throw new Error(`${config.provider} returned an empty response`);
   const result = parseInsightJson(text);
   if (!result.caption || !result.song || !result.artist) throw new Error(`${config.provider} returned an incomplete result`);
-  return result;
+  const preview = await findMusicPreview(result.song, result.artist);
+  return preview ? { ...result, preview } : result;
 }
 
 function serveFile(res, filePath, contentType) {
