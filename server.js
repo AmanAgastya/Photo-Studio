@@ -46,50 +46,60 @@ function parseInsightJson(text) {
   try { return JSON.parse(clean); }
   catch (_) {
     const match = clean.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error('Groq did not return JSON insights');
+    if (!match) throw new Error('Grok did not return JSON insights');
     return JSON.parse(match[0]);
   }
 }
 
-function groqError(status) {
-  if (status === 401 || status === 403) return 'Groq authentication failed. Check that GROQ_API_KEY is a valid, active key from console.groq.com/keys.';
-  if (status === 429) return 'Groq rate limit or account quota reached. Please try again shortly.';
-  if (status === 404) return 'The configured Groq model is unavailable. Check GROQ_MODEL or remove it to use qwen/qwen3.6-27b.';
-  return `Groq API request failed (${status}). Check the Vercel function logs for details.`;
+function grokError(status) {
+  if (status === 401 || status === 403) return 'Grok authentication failed. Check that XAI_API_KEY is a valid, active key from console.x.ai.';
+  if (status === 413) return 'The uploaded image is too large for Grok. Try a smaller image.';
+  if (status === 429) return 'Grok rate limit or account quota reached. Please try again shortly.';
+  if (status === 404) return 'The configured Grok model is unavailable. Check XAI_MODEL or remove it to use grok-4.5.';
+  return `Grok API request failed (${status}). Check the server logs for details.`;
 }
 
 async function createRollInsights(images) {
-  const apiKey = process.env.GROQ_API_KEY || process.env.XAI_API_KEY;
-  if (!apiKey) throw new Error('Missing GROQ_API_KEY on the server');
+  const apiKey = process.env.XAI_API_KEY;
+  if (!apiKey) throw new Error('Missing XAI_API_KEY on the server');
 
-  const content = [{
-    type: 'text',
-    text: 'Analyze these images as one photo roll. Return ONLY valid JSON with string fields caption (warm Hinglish or Hindi social caption, 16-26 words), hashtags (6-8 space-separated hashtags), song (a real Hindi song title), artist (artist name), and reason (16 words maximum). Make one cohesive recommendation for the complete set.'
-  }];
-  images.forEach(image => content.push({ type: 'image_url', image_url: { url: image } }));
+  // Grok accepts base64 image data URLs directly. Keep this payload entirely
+  // server-side so the xAI key is never exposed to the browser.
+  const content = images.map(image => ({
+    type: 'input_image',
+    image_url: image,
+    detail: 'high'
+  }));
+  content.push({
+    type: 'input_text',
+    text: 'Analyze these images as one photo roll. Return ONLY one valid JSON object with these string fields: caption (warm Hinglish or Hindi social caption, 16-26 words), hashtags (6-8 space-separated hashtags), song (a real Hindi song title), artist (artist name), and reason (16 words maximum). Make one cohesive recommendation for the complete set. Do not use markdown or add any text outside the JSON object.'
+  });
 
-  const upstream = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+  const upstream = await fetch('https://api.x.ai/v1/responses', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
-      model: process.env.GROQ_MODEL || 'qwen/qwen3.6-27b',
-      messages: [{ role: 'user', content }],
-      response_format: { type: 'json_object' },
-      max_completion_tokens: 300
+      model: process.env.XAI_MODEL || 'grok-4.5',
+      input: [{ role: 'user', content }],
+      max_output_tokens: 300,
+      store: false
     })
   });
   const raw = await upstream.text();
   if (!upstream.ok) {
-    console.error('Groq upstream response:', upstream.status, raw.slice(0, 500));
-    throw new Error(groqError(upstream.status));
+    console.error('Grok upstream response:', upstream.status, raw.slice(0, 500));
+    throw new Error(grokError(upstream.status));
   }
   let responseData;
   try { responseData = JSON.parse(raw); }
-  catch (_) { throw new Error('Groq returned an unreadable response'); }
-  const text = responseData.choices && responseData.choices[0] && responseData.choices[0].message
-    ? responseData.choices[0].message.content : '';
+  catch (_) { throw new Error('Grok returned an unreadable response'); }
+  const text = (responseData.output || []).flatMap(item => item.content || [])
+    .filter(item => item.type === 'output_text')
+    .map(item => item.text)
+    .join('');
+  if (!text) throw new Error('Grok returned an empty response');
   const result = parseInsightJson(text);
-  if (!result.caption || !result.song || !result.artist) throw new Error('Groq returned an incomplete result');
+  if (!result.caption || !result.song || !result.artist) throw new Error('Grok returned an incomplete result');
   return result;
 }
 
@@ -111,9 +121,9 @@ async function handler(req, res) {
       return sendJson(res, 200, await createRollInsights(images));
     } catch (error) {
       console.error('Roll insights error:', error.message);
-      const isConfigError = error.message.startsWith('Missing GROQ_API_KEY');
+      const isConfigError = error.message.startsWith('Missing XAI_API_KEY');
       return sendJson(res, isConfigError ? 500 : 502, {
-        error: isConfigError ? 'Groq is not configured. Add GROQ_API_KEY in Vercel environment variables.' : error.message
+        error: isConfigError ? 'Grok is not configured. Add XAI_API_KEY in your deployment environment variables.' : error.message
       });
     }
   }
