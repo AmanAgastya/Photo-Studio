@@ -81,14 +81,12 @@ async function createRollInsights(images) {
     provider: 'Groq',
     apiKey: groqKey,
     endpoint: 'https://api.groq.com/openai/v1/chat/completions',
-    model: process.env.GROQ_MODEL || 'qwen/qwen3.6-27b',
-    jsonMode: true
+    model: process.env.GROQ_MODEL || 'qwen/qwen3.6-27b'
   } : xaiKey ? {
     provider: 'Grok',
     apiKey: xaiKey,
     endpoint: 'https://api.x.ai/v1/chat/completions',
-    model: process.env.XAI_MODEL || 'grok-4.5',
-    jsonMode: false
+    model: process.env.XAI_MODEL || 'grok-4.5'
   } : null;
   if (!config) throw new Error('Missing GROQ_API_KEY or XAI_API_KEY on the server');
 
@@ -109,7 +107,7 @@ async function createRollInsights(images) {
     body: JSON.stringify({
       model: config.model,
       messages: [{ role: 'user', content }],
-      ...(config.jsonMode ? { response_format: { type: 'json_object' }, max_completion_tokens: 300 } : {})
+      ...(config.provider === 'Groq' ? { max_completion_tokens: 300 } : {})
     })
   });
   const raw = await upstream.text();
