@@ -391,7 +391,7 @@
     return out;
   }
 
-  async function requestGroupSong(batchId = activeBatchId){
+  async function requestGroupSong(batchId = activeBatchId, existingCaption = ''){
     const photos = developedPhotos.slice();
     if(!photos.length) return;
     if(mixtapeRegenBtn) mixtapeRegenBtn.style.display = 'none';
@@ -401,15 +401,15 @@
       <div class="mixtape-loading"><span class="dot">●</span><span class="dot">●</span><span class="dot">●</span> writing a caption and picking a song for this ${photos.length === 1 ? 'photo' : 'set'}</div>
     `;
     try{
-      const { caption, hashtags, song, artist, reason, preview } = await getGroupSong(pickSample(photos, MAX_PHOTOS_FOR_SONG), captionDirection);
+      const { caption, hashtags, song, artist, reason, preview } = await getGroupSong(pickSample(photos, MAX_PHOTOS_FOR_SONG), captionDirection, existingCaption);
       if(batchId !== activeBatchId) return;
       mixtapeBody.innerHTML = `
         <p class="mixtape-eyebrow">caption + soundtrack · ${photos.length} photo${photos.length===1?'':'s'}</p>
         <textarea class="caption-box roll-caption" aria-label="Group caption" spellcheck="false">${escapeHtml(caption)}</textarea>
         <div class="caption-style-control">
-          <label for="captionDirection">Caption style</label>
-          <input id="captionDirection" class="caption-style-input" type="text" maxlength="160" placeholder="e.g. funny, romantic, minimal, travel vibe">
-          <button class="btn caption-style-btn" type="button">Update caption</button>
+          <label for="captionDirection">Modify caption</label>
+          <input id="captionDirection" class="caption-style-input" type="text" maxlength="160" placeholder="e.g. make it funnier, shorter, or more romantic">
+          <button class="btn caption-style-btn" type="button">Apply suggestion</button>
         </div>
         <div class="hashtags">${escapeHtml(hashtags)}</div>
         <p class="mixtape-song">${escapeHtml(song)} <span class="artist">— ${escapeHtml(artist)}</span></p>
@@ -425,7 +425,8 @@
       directionInput.value = captionDirection;
       directionButton.addEventListener('click', ()=>{
         captionDirection = directionInput.value.trim().slice(0, 160);
-        requestGroupSong(activeBatchId);
+        const currentCaption = mixtapeBody.querySelector('.roll-caption').value.trim();
+        requestGroupSong(activeBatchId, currentCaption);
       });
       directionInput.addEventListener('keydown', event => {
         if(event.key === 'Enter'){
@@ -457,14 +458,14 @@
     });
   }
 
-  async function getGroupSong(photos, direction = ''){
+  async function getGroupSong(photos, direction = '', existingCaption = ''){
     // Groq limits the number of direct vision inputs. A single contact-sheet
     // image lets one request reflect every photo in a roll of up to ten.
     const images = [await createAnalysisCollage(photos)];
     const response = await fetch('/api/roll-insights', {
       method: 'POST', cache: 'no-store',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ images, captionPreference: direction })
+      body: JSON.stringify({ images, captionPreference: direction, existingCaption })
     });
     const result = await response.json().catch(()=> ({}));
     if(!response.ok) throw new Error(result.error || 'Could not generate caption and song.');

@@ -140,7 +140,7 @@ async function findMusicPreview(song, artist) {
   }
 }
 
-async function createRollInsights(images, captionPreference = '') {
+async function createRollInsights(images, captionPreference = '', existingCaption = '') {
   // This project already has a GROQ_API_KEY. Prefer it because it cannot be
   // used with xAI/Grok, then support XAI_API_KEY when an xAI key is supplied.
   // A previous setup placed a Groq gsk_ key in XAI_API_KEY; accept that legacy
@@ -168,7 +168,7 @@ async function createRollInsights(images, captionPreference = '') {
   }));
   content.push({
     type: 'text',
-    text: `All supplied images belong to ONE photo roll. Study the visible people, place, activity, colors, expressions, and mood, then create exactly ONE polished social-media suggestion for the complete roll—never separate captions per image. Make the caption specific to what is visibly present, warm and natural Hinglish/Hindi, expressive, and ready to post. Avoid generic phrases, explanations, quotation marks, and hashtags inside the caption. ${captionPreference ? `The user wants this caption style: ${captionPreference}. Follow that style while staying grounded in the visible scene.` : ''} Return exactly these five labeled lines with no analysis or markdown: Caption: [best post-ready caption for the complete roll]\nHashtags: [relevant space-separated hashtags]\nSong: [one real Hindi song matching the complete roll]\nArtist: [artist name]\nReason: [why the caption and song fit the visible mood]`
+    text: `All supplied images belong to ONE photo roll. Study the visible people, place, activity, colors, expressions, and mood, then create exactly ONE polished social-media suggestion for the complete roll—never separate captions per image. Make the caption specific to what is visibly present, warm and natural Hinglish/Hindi, expressive, and ready to post. Avoid generic phrases, explanations, quotation marks, and hashtags inside the caption. ${existingCaption ? `The current caption is: "${existingCaption}". Rewrite that caption, retaining its best idea while improving it according to the user's feedback.` : ''} ${captionPreference ? `The user wants this change: ${captionPreference}. Follow it while staying grounded in the visible scene.` : ''} Return exactly these five labeled lines with no analysis or markdown: Caption: [best post-ready caption for the complete roll]\nHashtags: [relevant space-separated hashtags]\nSong: [one real Hindi song matching the complete roll]\nArtist: [artist name]\nReason: [why the caption and song fit the visible mood]`
   });
 
   const upstream = await fetch(config.endpoint, {
@@ -211,12 +211,13 @@ function serveFile(res, filePath, contentType) {
 async function handler(req, res) {
   if (req.method === 'POST' && req.url.split('?')[0] === '/api/roll-insights') {
     try {
-      const { images, captionPreference } = await readJson(req);
+      const { images, captionPreference, existingCaption } = await readJson(req);
       if (!Array.isArray(images) || !images.length || images.length > 5 || images.some(image => typeof image !== 'string' || !/^data:image\/(jpeg|png);base64,/.test(image))) {
         return sendJson(res, 400, { error: 'Send 1 to 5 JPEG or PNG images.' });
       }
       const safeCaptionPreference = typeof captionPreference === 'string' ? captionPreference.trim().slice(0, 160) : '';
-      return sendJson(res, 200, await createRollInsights(images, safeCaptionPreference));
+      const safeExistingCaption = typeof existingCaption === 'string' ? existingCaption.trim().slice(0, 1000) : '';
+      return sendJson(res, 200, await createRollInsights(images, safeCaptionPreference, safeExistingCaption));
     } catch (error) {
       console.error('Roll insights error:', error.message);
       const isConfigError = error.message.startsWith('Missing GROQ_API_KEY or XAI_API_KEY');
