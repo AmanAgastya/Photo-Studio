@@ -141,7 +141,7 @@ async function createRollInsights(images) {
   }));
   content.push({
     type: 'text',
-    text: 'All supplied images belong to ONE photo roll. Create exactly ONE cohesive, editable social-media suggestion for the whole roll, never separate captions or songs for individual images. Return exactly these five labeled lines with no analysis or markdown: Caption: [warm Hinglish or Hindi caption, 16-26 words for the complete roll]\nHashtags: [6-8 space-separated hashtags]\nSong: [one real Hindi song for the complete roll]\nArtist: [artist name]\nReason: [why it fits the complete roll, 16 words maximum]'
+    text: 'All supplied images belong to ONE photo roll. Study the visible people, place, activity, colors, expressions, and mood, then create exactly ONE polished social-media suggestion for the complete roll—never separate captions per image. Make the caption specific to what is visibly present, warm and natural Hinglish/Hindi, concise (12-22 words), expressive, and ready to post. Avoid generic phrases, explanations, quotation marks, and hashtags inside the caption. Return exactly these five labeled lines with no analysis or markdown: Caption: [best post-ready caption for the complete roll]\nHashtags: [6-8 relevant space-separated hashtags]\nSong: [one real Hindi song matching the complete roll]\nArtist: [artist name]\nReason: [why the caption and song fit the visible mood, 16 words maximum]'
   });
 
   const upstream = await fetch(config.endpoint, {
