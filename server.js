@@ -114,7 +114,7 @@ function providerError(provider, status, raw) {
   return `${provider} API request failed (${status}). Check the server logs for details.`;
 }
 
-async function createRollInsights(images) {
+async function createRollInsights(images, captionPreference = '') {
   // This project already has a GROQ_API_KEY. Prefer it because it cannot be
   // used with xAI/Grok, then support XAI_API_KEY when an xAI key is supplied.
   // A previous setup placed a Groq gsk_ key in XAI_API_KEY; accept that legacy
@@ -142,7 +142,7 @@ async function createRollInsights(images) {
   }));
   content.push({
     type: 'text',
-    text: 'All supplied images belong to ONE photo roll. Study the visible people, place, activity, colors, expressions, and mood, then create exactly ONE polished social-media suggestion for the complete roll—never separate captions per image. Make the caption specific to what is visibly present, warm and natural Hinglish/Hindi, concise (12-22 words), expressive, and ready to post. Avoid generic phrases, explanations, quotation marks, and hashtags inside the caption. Return exactly these five labeled lines with no analysis or markdown: Caption: [best post-ready caption for the complete roll]\nHashtags: [6-8 relevant space-separated hashtags]\nSong: [one real Hindi song matching the complete roll]\nArtist: [artist name]\nReason: [why the caption and song fit the visible mood, 16 words maximum]'
+    text: `All supplied images belong to ONE photo roll. Study the visible people, place, activity, colors, expressions, and mood, then create exactly ONE polished social-media suggestion for the complete roll—never separate captions per image. Make the caption specific to what is visibly present, warm and natural Hinglish/Hindi, expressive, and ready to post. Avoid generic phrases, explanations, quotation marks, and hashtags inside the caption. ${captionPreference ? `The user wants this caption style: ${captionPreference}. Follow that style while staying grounded in the visible scene.` : ''} Return exactly these five labeled lines with no analysis or markdown: Caption: [best post-ready caption for the complete roll]\nHashtags: [relevant space-separated hashtags]\nSong: [one real Hindi song matching the complete roll]\nArtist: [artist name]\nReason: [why the caption and song fit the visible mood]`
   });
 
   const upstream = await fetch(config.endpoint, {
@@ -152,7 +152,6 @@ async function createRollInsights(images) {
       model: config.model,
       messages: [{ role: 'user', content }],
       ...(config.provider === 'Groq' ? {
-        max_completion_tokens: 300,
         temperature: 0.8,
         reasoning_effort: 'none',
         reasoning_format: 'hidden'
@@ -185,11 +184,12 @@ function serveFile(res, filePath, contentType) {
 async function handler(req, res) {
   if (req.method === 'POST' && req.url.split('?')[0] === '/api/roll-insights') {
     try {
-      const { images } = await readJson(req);
+      const { images, captionPreference } = await readJson(req);
       if (!Array.isArray(images) || !images.length || images.length > 5 || images.some(image => typeof image !== 'string' || !/^data:image\/(jpeg|png);base64,/.test(image))) {
         return sendJson(res, 400, { error: 'Send 1 to 5 JPEG or PNG images.' });
       }
-      return sendJson(res, 200, await createRollInsights(images));
+      const safeCaptionPreference = typeof captionPreference === 'string' ? captionPreference.trim().slice(0, 160) : '';
+      return sendJson(res, 200, await createRollInsights(images, safeCaptionPreference));
     } catch (error) {
       console.error('Roll insights error:', error.message);
       const isConfigError = error.message.startsWith('Missing GROQ_API_KEY or XAI_API_KEY');

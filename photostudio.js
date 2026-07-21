@@ -17,6 +17,8 @@
   let isRunning = false;
   const developedPhotos = []; // photos belonging only to the current upload batch
   let activeBatchId = 0;
+  let captionDirection = '';
+  const MAX_PHOTOS_PER_ROLL = 10;
 
   function showToast(msg){
     if(!toastEl) return;
@@ -46,13 +48,16 @@
   }
 
   function handleFiles(fileList){
-    const files = Array.from(fileList).filter(f=> f.type.startsWith('image/'));
+    const selected = Array.from(fileList).filter(f=> f.type.startsWith('image/'));
+    const files = selected.slice(0, MAX_PHOTOS_PER_ROLL);
     if(!files.length){ showToast('Only image files, please.'); return; }
+    if(selected.length > MAX_PHOTOS_PER_ROLL) showToast('Using the first 10 photos for this roll.');
     // A fresh drop starts a fresh roll. This prevents an old upload from being
     // included when a user later analyzes one image or a new group.
     if(!isRunning && !queue.length){
       activeBatchId++;
       developedPhotos.length = 0;
+      captionDirection = '';
       if(mixtape) mixtape.style.display = 'none';
     }
     files.forEach(addToQueue);
@@ -375,7 +380,7 @@
   }
 
   // ---------- one song for the whole roll (group, not per-photo) ----------
-  const MAX_PHOTOS_FOR_SONG = 5; // representative sample, within the server and API payload limit
+  const MAX_PHOTOS_FOR_SONG = MAX_PHOTOS_PER_ROLL;
 
   function pickSample(list, max){
     if(list.length <= max) return list;
@@ -396,15 +401,33 @@
       <div class="mixtape-loading"><span class="dot">●</span><span class="dot">●</span><span class="dot">●</span> writing a caption and picking a song for this ${photos.length === 1 ? 'photo' : 'set'}</div>
     `;
     try{
-      const { caption, hashtags, song, artist, reason } = await getGroupSong(pickSample(photos, MAX_PHOTOS_FOR_SONG));
+      const { caption, hashtags, song, artist, reason } = await getGroupSong(pickSample(photos, MAX_PHOTOS_FOR_SONG), captionDirection);
       if(batchId !== activeBatchId) return;
       mixtapeBody.innerHTML = `
         <p class="mixtape-eyebrow">caption + soundtrack · ${photos.length} photo${photos.length===1?'':'s'}</p>
         <textarea class="caption-box roll-caption" aria-label="Group caption" spellcheck="false">${escapeHtml(caption)}</textarea>
+        <div class="caption-style-control">
+          <label for="captionDirection">Caption style</label>
+          <input id="captionDirection" class="caption-style-input" type="text" maxlength="160" placeholder="e.g. funny, romantic, minimal, travel vibe">
+          <button class="btn caption-style-btn" type="button">Update caption</button>
+        </div>
         <div class="hashtags">${escapeHtml(hashtags)}</div>
         <p class="mixtape-song">${escapeHtml(song)} <span class="artist">— ${escapeHtml(artist)}</span></p>
         <p class="mixtape-reason">${escapeHtml(reason)}</p>
       `;
+      const directionInput = mixtapeBody.querySelector('.caption-style-input');
+      const directionButton = mixtapeBody.querySelector('.caption-style-btn');
+      directionInput.value = captionDirection;
+      directionButton.addEventListener('click', ()=>{
+        captionDirection = directionInput.value.trim().slice(0, 160);
+        requestGroupSong(activeBatchId);
+      });
+      directionInput.addEventListener('keydown', event => {
+        if(event.key === 'Enter'){
+          event.preventDefault();
+          directionButton.click();
+        }
+      });
     }catch(err){
       console.error(err);
       if(batchId !== activeBatchId) return;
@@ -422,12 +445,14 @@
     });
   }
 
-  async function getGroupSong(photos){
-    const images = await Promise.all(photos.map(photo => resizeForAnalysis(photo.dataUrl)));
+  async function getGroupSong(photos, direction = ''){
+    // Groq limits the number of direct vision inputs. A single contact-sheet
+    // image lets one request reflect every photo in a roll of up to ten.
+    const images = [await createAnalysisCollage(photos)];
     const response = await fetch('/api/roll-insights', {
       method: 'POST', cache: 'no-store',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ images })
+      body: JSON.stringify({ images, captionPreference: direction })
     });
     const result = await response.json().catch(()=> ({}));
     if(!response.ok) throw new Error(result.error || 'Could not generate caption and song.');
@@ -454,6 +479,35 @@
       };
       img.onerror = reject;
       img.src = dataUrl;
+    });
+  }
+
+  function createAnalysisCollage(photos){
+    if(photos.length === 1) return resizeForAnalysis(photos[0].dataUrl);
+    return Promise.all(photos.map(photo => new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = ()=> resolve(img);
+      img.onerror = ()=> reject(new Error('Could not prepare a photo for caption analysis.'));
+      img.src = photo.dataUrl;
+    }))).then(images => {
+      const columns = Math.ceil(Math.sqrt(images.length));
+      const rows = Math.ceil(images.length / columns);
+      const cell = Math.max(220, Math.floor(1200 / columns));
+      const canvas = document.createElement('canvas');
+      canvas.width = columns * cell;
+      canvas.height = rows * cell;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#191613';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      images.forEach((img, index) => {
+        const x = (index % columns) * cell;
+        const y = Math.floor(index / columns) * cell;
+        const scale = Math.max(cell / img.width, cell / img.height);
+        const width = img.width * scale;
+        const height = img.height * scale;
+        ctx.drawImage(img, x + (cell - width) / 2, y + (cell - height) / 2, width, height);
+      });
+      return canvas.toDataURL('image/jpeg', 0.84);
     });
   }
 

@@ -172,6 +172,10 @@ h1.brand span{ color:var(--amber); }
   padding:10px; outline:none;
 }
 .caption-box:focus{ border-color:var(--amber); }
+.caption-style-control{ display:flex; gap:8px; align-items:center; margin:8px 0; flex-wrap:wrap; }
+.caption-style-control label{ color:var(--ink-faint); font-family:'Space Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:.08em; }
+.caption-style-input{ flex:1 1 180px; min-width:0; background:var(--bg-elevated); border:1px solid var(--line); border-radius:4px; color:var(--paper); padding:8px 10px; font:12px 'Inter',sans-serif; outline:none; }
+.caption-style-input:focus{ border-color:var(--amber); }
 .hashtags{
   font-family:'Space Mono',monospace; font-size:11.5px; color:var(--cyan); word-break:break-word;
 }
