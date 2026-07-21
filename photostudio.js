@@ -275,24 +275,26 @@
         try{
           const id = ctx.getImageData(0,0,w,h);
           const data = id.data;
-          // exposure factor
-          const f = 1 + (amount/100);
-          // small contrast tweak based on amount
-          const contrast = 1 + (Math.abs(amount)/400);
+          // Exposure stops and a restrained tone curve behave more naturally
+          // than a flat brightness multiplier, especially in highlights.
+          const exposure = Math.pow(2, amount / 120);
+          const contrast = 1 + Math.abs(amount) / 550;
           const intercept = 128*(1-contrast);
           for(let i=0; i<data.length; i+=4){
-            // apply exposure
-            let r = data[i]*f;
-            let g = data[i+1]*f;
-            let b = data[i+2]*f;
-            // apply contrast around mid (simple linear contrast)
+            let r = data[i]*exposure;
+            let g = data[i+1]*exposure;
+            let b = data[i+2]*exposure;
+            // Roll off bright tones before contrast to protect skies and skin.
+            r = 255*(1-Math.exp(-r/255*1.35));
+            g = 255*(1-Math.exp(-g/255*1.35));
+            b = 255*(1-Math.exp(-b/255*1.35));
             r = clampByte(r*contrast + intercept);
             g = clampByte(g*contrast + intercept);
             b = clampByte(b*contrast + intercept);
             data[i] = r; data[i+1] = g; data[i+2] = b;
           }
           ctx.putImageData(id,0,0);
-          const out = canvas.toDataURL('image/jpeg',0.94);
+          const out = canvas.toDataURL('image/jpeg',0.98);
           resolve(out);
         }catch(err){ reject(err); }
       };
@@ -354,13 +356,13 @@
     });
     afterImg.style.clipPath = 'inset(0 50% 0 0)';
 
-    // download
+    // Download the current enhanced image, including any later lighting edits.
     card.querySelector('.download-btn').addEventListener('click', ()=>{
       const a = document.createElement('a');
-      a.href = enhancedUrl;
+      a.href = card._enhancedUrl;
       a.download = card.dataset.filename + '-enhanced.jpg';
       a.click();
-      showToast('Saved.');
+      showToast('HD image saved.');
     });
 
     card._enhancedUrl = enhancedUrl;
