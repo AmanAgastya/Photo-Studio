@@ -51,7 +51,13 @@ function parseInsightJson(text) {
   }
 }
 
-function grokError(status) {
+function grokError(status, raw) {
+  let detail = '';
+  try {
+    const body = JSON.parse(raw);
+    detail = body?.error?.message || body?.message || '';
+  } catch (_) { /* Use the status-specific fallback below. */ }
+  if (detail) return `Grok rejected the request: ${String(detail).slice(0, 300)}`;
   if (status === 401 || status === 403) return 'Grok authentication failed. Check that XAI_API_KEY is a valid, active key from console.x.ai.';
   if (status === 413) return 'The uploaded image is too large for Grok. Try a smaller image.';
   if (status === 429) return 'Grok rate limit or account quota reached. Please try again shortly.';
@@ -66,37 +72,32 @@ async function createRollInsights(images) {
   // Grok accepts base64 image data URLs directly. Keep this payload entirely
   // server-side so the xAI key is never exposed to the browser.
   const content = images.map(image => ({
-    type: 'input_image',
-    image_url: image,
-    detail: 'high'
+    type: 'image_url',
+    image_url: { url: image, detail: 'high' }
   }));
   content.push({
-    type: 'input_text',
+    type: 'text',
     text: 'Analyze these images as one photo roll. Return ONLY one valid JSON object with these string fields: caption (warm Hinglish or Hindi social caption, 16-26 words), hashtags (6-8 space-separated hashtags), song (a real Hindi song title), artist (artist name), and reason (16 words maximum). Make one cohesive recommendation for the complete set. Do not use markdown or add any text outside the JSON object.'
   });
 
-  const upstream = await fetch('https://api.x.ai/v1/responses', {
+  const upstream = await fetch('https://api.x.ai/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
       model: process.env.XAI_MODEL || 'grok-4.5',
-      input: [{ role: 'user', content }],
-      max_output_tokens: 300,
-      store: false
+      messages: [{ role: 'user', content }],
+      max_completion_tokens: 300
     })
   });
   const raw = await upstream.text();
   if (!upstream.ok) {
     console.error('Grok upstream response:', upstream.status, raw.slice(0, 500));
-    throw new Error(grokError(upstream.status));
+    throw new Error(grokError(upstream.status, raw));
   }
   let responseData;
   try { responseData = JSON.parse(raw); }
   catch (_) { throw new Error('Grok returned an unreadable response'); }
-  const text = (responseData.output || []).flatMap(item => item.content || [])
-    .filter(item => item.type === 'output_text')
-    .map(item => item.text)
-    .join('');
+  const text = responseData.choices?.[0]?.message?.content || '';
   if (!text) throw new Error('Grok returned an empty response');
   const result = parseInsightJson(text);
   if (!result.caption || !result.song || !result.artist) throw new Error('Grok returned an incomplete result');
