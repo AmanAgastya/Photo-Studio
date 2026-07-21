@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Develop — group photo dump studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Archivo+Expanded:wght@600;700;800&family=Space+Mono:wght@400;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="photostudio.css">
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <div>
+        <p class="brand-eyebrow">group roll &middot; auto-develop &amp; caption</p>
+        <h1 class="brand">DEVEL<span>O</span>P.</h1>
+        <p class="tagline">Drop a batch of photos, let the studio enhance them, and turn the whole roll into one polished caption and soundtrack.</p>
+      </div>
+      <div class="roll-counter">frames <b id="frameCount">0</b></div>
+    </header>
+
+    <section class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Upload photos">
+      <input type="file" id="fileInput" accept="image/*" multiple>
+      <div class="icon" aria-hidden="true">✦</div>
+      <h3>Drop your roll here</h3>
+      <p>PNG, JPG, and other image files are supported.</p>
+    </section>
+
+    <div class="mixtape" id="mixtape" aria-live="polite">
+      <div class="mixtape-icon" aria-hidden="true">♪</div>
+      <div class="mixtape-body" id="mixtapeBody"></div>
+      <button class="btn" id="mixtapeRegenBtn" type="button">Re-pick</button>
+    </div>
+
+    <section class="queue-section" id="queueSection" style="display:none;">
+      <p class="section-label">queue</p>
+      <div class="filmstrip" id="filmstrip"></div>
+    </section>
+
+    <div id="emptyNote" class="empty-note">The contact sheet will appear here once your photos are developed.</div>
+    <div class="contact-sheet" id="contactSheet"></div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="photostudio.js" defer></script>
+</body>
+</html>
