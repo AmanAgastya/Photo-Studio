@@ -19,6 +19,7 @@
   let activeBatchId = 0;
   let captionDirection = '';
   const MAX_PHOTOS_PER_ROLL = 10;
+  const IMAGE_FILENAME = /\.(avif|bmp|gif|heic|heif|jpe?g|png|webp)$/i;
 
   function showToast(msg){
     if(!toastEl) return;
@@ -48,7 +49,9 @@
   }
 
   function handleFiles(fileList){
-    const selected = Array.from(fileList).filter(f=> f.type.startsWith('image/'));
+    // Some phones and file managers leave File.type blank. Keep recognised
+    // photo files in the queue instead of rejecting them before decoding.
+    const selected = Array.from(fileList).filter(f=> f.type.startsWith('image/') || IMAGE_FILENAME.test(f.name));
     const files = selected.slice(0, MAX_PHOTOS_PER_ROLL);
     if(!files.length){ showToast('Only image files, please.'); return; }
     if(selected.length > MAX_PHOTOS_PER_ROLL) showToast('Using the first 10 photos for this roll.');
@@ -105,10 +108,11 @@
       item.status = 'processing';
       renderFilmstrip();
       try{
-        const { originalUrl, enhancedUrl, mime, width, height } = await enhanceImage(item.file);
+        const { originalUrl, enhancedUrl, mime, width, height, usedOriginal } = await enhanceImage(item.file);
         frameNumber++;
         const card = addCard(frameNumber, originalUrl, enhancedUrl, mime, item.file.name, width, height);
         developedPhotos.push({ dataUrl: enhancedUrl, mime });
+        if(usedOriginal) showToast('Frame added with the original image; enhancement was unavailable.');
         // remove from queue once handed to contact sheet
         const idx = queue.indexOf(item);
         if(idx>-1) queue.splice(idx,1);
@@ -147,7 +151,7 @@
   }
 
   async function enhanceImage(file){
-    const { img } = await loadImage(file);
+    const { img, dataUrl } = await loadImage(file);
     let { width, height } = img;
     const longSide = Math.max(width, height);
 
@@ -163,36 +167,42 @@
     const w = Math.max(1, Math.round(width * scale));
     const h = Math.max(1, Math.round(height * scale));
 
-    // original preview (same size, for a fair before/after comparison)
-    const origCanvas = document.createElement('canvas');
-    origCanvas.width = w; origCanvas.height = h;
-    const origCtx = origCanvas.getContext('2d');
-    origCtx.imageSmoothingEnabled = true;
-    origCtx.imageSmoothingQuality = 'high';
-    origCtx.drawImage(img, 0, 0, w, h);
-    const originalUrl = origCanvas.toDataURL('image/jpeg', 0.96);
+    try{
+      // original preview (same size, for a fair before/after comparison)
+      const origCanvas = document.createElement('canvas');
+      origCanvas.width = w; origCanvas.height = h;
+      const origCtx = origCanvas.getContext('2d');
+      origCtx.imageSmoothingEnabled = true;
+      origCtx.imageSmoothingQuality = 'high';
+      origCtx.drawImage(img, 0, 0, w, h);
+      const originalUrl = origCanvas.toDataURL('image/jpeg', 0.96);
 
-    // enhanced version: draw at a higher-res target, then run a softer
-    // lighting/color pass to keep details crisp without making the photo look washed out.
-    const canvas = document.createElement('canvas');
-    canvas.width = w; canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    ctx.filter = 'contrast(1.02) saturate(1.035) brightness(1)';
-    ctx.drawImage(img, 0, 0, w, h);
-    ctx.filter = 'none';
+      // Enhanced version: draw at a higher-res target, then process pixels.
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.filter = 'contrast(1.02) saturate(1.035) brightness(1)';
+      ctx.drawImage(img, 0, 0, w, h);
+      ctx.filter = 'none';
 
-    const imageData = ctx.getImageData(0, 0, w, h);
-    autoWhiteBalance(imageData);
-    autoLevels(imageData);
-    liftShadowsAndPop(imageData);
-    applyFilmTone(imageData);
-    sharpen(imageData, 0.20);
-    ctx.putImageData(imageData, 0, 0);
+      const imageData = ctx.getImageData(0, 0, w, h);
+      autoWhiteBalance(imageData);
+      autoLevels(imageData);
+      liftShadowsAndPop(imageData);
+      applyFilmTone(imageData);
+      sharpen(imageData, 0.20);
+      ctx.putImageData(imageData, 0, 0);
 
-    const enhancedUrl = canvas.toDataURL('image/jpeg', 0.98);
-    return { originalUrl, enhancedUrl, mime:'image/jpeg', width:w, height:h };
+      const enhancedUrl = canvas.toDataURL('image/jpeg', 0.98);
+      return { originalUrl, enhancedUrl, mime:'image/jpeg', width:w, height:h, usedOriginal:false };
+    }catch(error){
+      // A valid image can still fail pixel access due to browser canvas limits.
+      // Retain it rather than dropping its frame from the roll.
+      console.warn('Enhancement unavailable; keeping original image.', error);
+      return { originalUrl:dataUrl, enhancedUrl:dataUrl, mime:file.type || 'image/jpeg', width, height, usedOriginal:true };
+    }
   }
 
   function clampByte(v){ return v<0 ? 0 : v>255 ? 255 : v; }
