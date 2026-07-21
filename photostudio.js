@@ -375,7 +375,7 @@
   }
 
   // ---------- one song for the whole roll (group, not per-photo) ----------
-  const MAX_PHOTOS_FOR_SONG = 8; // representative sample, within the server and API payload limit
+  const MAX_PHOTOS_FOR_SONG = 5; // representative sample, within the server and API payload limit
 
   function pickSample(list, max){
     if(list.length <= max) return list;
@@ -410,7 +410,7 @@
       if(batchId !== activeBatchId) return;
       mixtapeBody.innerHTML = `
         <p class="mixtape-eyebrow">caption + soundtrack</p>
-        <div class="mixtape-error">${escapeHtml(err.message || "Couldn't reach Grok. Hit regenerate to retry.")}</div>
+        <div class="mixtape-error">${escapeHtml(err.message || "Couldn't reach Groq. Hit regenerate to retry.")}</div>
       `;
     }
     if(mixtapeRegenBtn) mixtapeRegenBtn.style.display = '';
@@ -431,7 +431,7 @@
     });
     const result = await response.json().catch(()=> ({}));
     if(!response.ok) throw new Error(result.error || 'Could not generate caption and song.');
-    if(!result.caption || !result.song || !result.artist) throw new Error('Grok returned an incomplete caption or song recommendation.');
+    if(!result.caption || !result.song || !result.artist) throw new Error('Groq returned an incomplete caption or song recommendation.');
     return result;
   }
 
