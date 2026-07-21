@@ -1,6 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
+    { "source": "/api/roll-insights", "destination": "/server.js" },
     { "source": "/", "destination": "/photostudio.html" }
   ]
 }

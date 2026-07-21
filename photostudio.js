@@ -15,7 +15,8 @@
   let frameNumber = 0;
   const queue = [];      // waiting/processing items {id, file, thumbUrl, status}
   let isRunning = false;
-  const developedPhotos = []; // { dataUrl, mime } for every enhanced photo, whole-roll song picks off this
+  const developedPhotos = []; // photos belonging only to the current upload batch
+  let activeBatchId = 0;
 
   function showToast(msg){
     if(!toastEl) return;
@@ -47,6 +48,13 @@
   function handleFiles(fileList){
     const files = Array.from(fileList).filter(f=> f.type.startsWith('image/'));
     if(!files.length){ showToast('Only image files, please.'); return; }
+    // A fresh drop starts a fresh roll. This prevents an old upload from being
+    // included when a user later analyzes one image or a new group.
+    if(!isRunning && !queue.length){
+      activeBatchId++;
+      developedPhotos.length = 0;
+      if(mixtape) mixtape.style.display = 'none';
+    }
     files.forEach(addToQueue);
     if(!isRunning) runQueue();
   }
@@ -112,7 +120,7 @@
     }
     isRunning = false;
     // whole batch has drained — pick one song for the roll as a group, not per photo
-    if(developedPhotos.length) requestGroupSong();
+    if(developedPhotos.length) requestGroupSong(activeBatchId);
   }
 
   // ---------- enhancement pipeline ----------
@@ -378,17 +386,20 @@
     return out;
   }
 
-  async function requestGroupSong(){
+  async function requestGroupSong(batchId = activeBatchId){
+    const photos = developedPhotos.slice();
+    if(!photos.length) return;
     if(mixtapeRegenBtn) mixtapeRegenBtn.style.display = 'none';
     if(mixtape) mixtape.style.display = 'flex';
     mixtapeBody.innerHTML = `
       <p class="mixtape-eyebrow">soundtrack for this roll</p>
-      <div class="mixtape-loading"><span class="dot">●</span><span class="dot">●</span><span class="dot">●</span> picking a song for the whole set</div>
+      <div class="mixtape-loading"><span class="dot">●</span><span class="dot">●</span><span class="dot">●</span> writing a caption and picking a song for this ${photos.length === 1 ? 'photo' : 'set'}</div>
     `;
     try{
-      const { caption, hashtags, song, artist, reason } = await getGroupSong(pickSample(developedPhotos, MAX_PHOTOS_FOR_SONG));
+      const { caption, hashtags, song, artist, reason } = await getGroupSong(pickSample(photos, MAX_PHOTOS_FOR_SONG));
+      if(batchId !== activeBatchId) return;
       mixtapeBody.innerHTML = `
-        <p class="mixtape-eyebrow">soundtrack for this roll · ${developedPhotos.length} photo${developedPhotos.length===1?'':'s'}</p>
+        <p class="mixtape-eyebrow">caption + soundtrack · ${photos.length} photo${photos.length===1?'':'s'}</p>
         <textarea class="caption-box roll-caption" aria-label="Group caption" spellcheck="false">${escapeHtml(caption)}</textarea>
         <div class="hashtags">${escapeHtml(hashtags)}</div>
         <p class="mixtape-song">${escapeHtml(song)} <span class="artist">— ${escapeHtml(artist)}</span></p>
@@ -396,9 +407,10 @@
       `;
     }catch(err){
       console.error(err);
+      if(batchId !== activeBatchId) return;
       mixtapeBody.innerHTML = `
-        <p class="mixtape-eyebrow">soundtrack for this roll</p>
-        <div class="mixtape-error">Couldn't reach the model to pick a song — hit re-pick to retry.</div>
+        <p class="mixtape-eyebrow">caption + soundtrack</p>
+        <div class="mixtape-error">Couldn't reach the model — hit regenerate to retry.</div>
       `;
     }
     if(mixtapeRegenBtn) mixtapeRegenBtn.style.display = '';
@@ -406,7 +418,7 @@
 
   if(mixtapeRegenBtn){
     mixtapeRegenBtn.addEventListener('click', ()=>{
-      if(developedPhotos.length) requestGroupSong();
+      if(developedPhotos.length) requestGroupSong(activeBatchId);
     });
   }
 
@@ -421,7 +433,7 @@
     try{
       const images = await Promise.all(photos.map(photo => resizeForAnalysis(photo.dataUrl)));
       const response = await fetch('/api/roll-insights', {
-        method: 'POST',
+        method: 'POST', cache: 'no-store',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ images })
       });

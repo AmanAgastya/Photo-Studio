@@ -30,7 +30,11 @@ fs.readFile(filePath, (err, data) => {
 }
 
 function sendJson(res, status, data) {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    // Generated captions and songs must never be reused for another roll.
+    'Cache-Control': 'no-store'
+  });
   res.end(JSON.stringify(data));
 }
 
@@ -78,7 +82,7 @@ async function createRollInsights(images) {
   return result;
 }
 
-const server = http.createServer(async (req, res) => {
+async function handler(req, res) {
   if (req.method === 'POST' && req.url === '/api/roll-insights') {
     try {
       const { images } = await readJson(req);
@@ -106,8 +110,14 @@ const server = http.createServer(async (req, res) => {
   }[ext] || 'application/octet-stream';
 
   serveFile(res, filePath, contentType);
-});
+}
 
-server.listen(3000, () => {
-  console.log('Server running at http://localhost:3000');
-});
+// Vercel invokes the exported handler. Locally, retain the convenient static
+// server entry point with `node server.js`.
+module.exports = handler;
+
+if (require.main === module) {
+  http.createServer(handler).listen(3000, () => {
+    console.log('Server running at http://localhost:3000');
+  });
+}
