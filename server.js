@@ -63,7 +63,7 @@ function outputText(data) {
 }
 
 async function createRollInsights(images) {
-  const apiKey = process.env.XAI_API_KEY || process.env.GROK_API_KEY;
+  const apiKey = process.envgsk_X0CK5W476zImKwcdsUUXWGdyb3FYFfyhR79SjBpAtfJ07RdiQo27 || process.env.GROK_API_KEY;
   if (!apiKey) throw new Error('Missing XAI_API_KEY or GROK_API_KEY on the server');
   const content = [{
     type: 'input_text',
@@ -92,7 +92,10 @@ async function handler(req, res) {
       return sendJson(res, 200, await createRollInsights(images));
     } catch (error) {
       console.error('Roll insights error:', error.message);
-      return sendJson(res, 502, { error: 'Could not generate roll insights.' });
+      const isConfigError = error.message.startsWith('Missing XAI_API_KEY') || error.message.startsWith('Missing GROK_API_KEY');
+      return sendJson(res, isConfigError ? 500 : 502, {
+        error: isConfigError ? 'Grok is not configured. Add XAI_API_KEY in Vercel environment variables.' : 'Grok could not generate roll insights. Please try again.'
+      });
     }
   }
   const pathname = decodeURIComponent(req.url.split('?')[0]);

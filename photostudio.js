@@ -410,7 +410,7 @@
       if(batchId !== activeBatchId) return;
       mixtapeBody.innerHTML = `
         <p class="mixtape-eyebrow">caption + soundtrack</p>
-        <div class="mixtape-error">Couldn't reach the model — hit regenerate to retry.</div>
+        <div class="mixtape-error">${escapeHtml(err.message || "Couldn't reach Grok. Hit regenerate to retry.")}</div>
       `;
     }
     if(mixtapeRegenBtn) mixtapeRegenBtn.style.display = '';
@@ -423,33 +423,16 @@
   }
 
   async function getGroupSong(photos){
-    const count = photos.length;
-    const fallbackSong = count >= 5 ? 'Gallan Goodiyan' : 'Phir Aur Kya Chahiye';
-    const fallbackArtist = count >= 5 ? 'Shankar Ehsaan Loy' : 'Arijit Singh';
-    const fallbackReason = count >= 5
-      ? 'Energetic and fun, perfect for a lively friend-group roll.'
-      : 'Warm and nostalgic, fitting a cozy memory-filled set.';
-
-    try{
-      const images = await Promise.all(photos.map(photo => resizeForAnalysis(photo.dataUrl)));
-      const response = await fetch('/api/roll-insights', {
-        method: 'POST', cache: 'no-store',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ images })
-      });
-      if(!response.ok) throw new Error('Insights request failed');
-      const result = await response.json();
-      return {
-        caption: result.caption || 'A little glow, a lot of memories, and a whole lot of heart.',
-        hashtags: result.hashtags || '#photoDump #yaadein #friendsForever #mood #capturedMoments',
-        song: result.song || fallbackSong,
-        artist: result.artist || fallbackArtist,
-        reason: result.reason || fallbackReason
-      };
-    }catch(err){
-      console.warn('API song generation failed, using fallback', err);
-      return { caption: 'A little glow, a lot of memories, and a whole lot of heart.', hashtags: '#photoDump #yaadein #friendsForever #mood #capturedMoments', song: fallbackSong, artist: fallbackArtist, reason: fallbackReason };
-    }
+    const images = await Promise.all(photos.map(photo => resizeForAnalysis(photo.dataUrl)));
+    const response = await fetch('/api/roll-insights', {
+      method: 'POST', cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ images })
+    });
+    const result = await response.json().catch(()=> ({}));
+    if(!response.ok) throw new Error(result.error || 'Could not generate caption and song.');
+    if(!result.caption || !result.song || !result.artist) throw new Error('Grok returned an incomplete caption or song recommendation.');
+    return result;
   }
 
   function escapeHtml(str){
