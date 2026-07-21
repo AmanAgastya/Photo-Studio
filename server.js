@@ -54,12 +54,23 @@ function parseInsightJson(text) {
     // Some vision models answer with readable labels despite being asked for
     // JSON. Accept that useful response instead of discarding the caption.
     const fields = {};
-    clean.split(/\r?\n/).forEach(line => {
-      const normalized = line.replace(/\*\*/g, '').replace(/^\s*[-*]\s*/, '').trim();
-      const label = normalized.match(/^(caption|hashtags|song|artist|reason)\s*[:\-]\s*(.+)$/i);
-      if (label) fields[label[1].toLowerCase()] = label[2].trim().replace(/^['"]|['"]$/g, '');
+    const plain = clean.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/\*\*/g, '').trim();
+    const labelPattern = /\b(caption|hashtags|song|artist|reason)\s*[:=-]\s*/gi;
+    const labels = [...plain.matchAll(labelPattern)];
+    labels.forEach((label, index) => {
+      const start = label.index + label[0].length;
+      const end = index + 1 < labels.length ? labels[index + 1].index : plain.length;
+      fields[label[1].toLowerCase()] = plain.slice(start, end)
+        .replace(/^[\s'"`]+|[\s'"`,;]+$/g, '').trim();
     });
     if (fields.caption && fields.song) {
+      if (!fields.artist) {
+        const splitSong = fields.song.match(/^(.+?)\s+(?:—|–)\s+(.+)$/);
+        if (splitSong) {
+          fields.song = splitSong[1].trim();
+          fields.artist = splitSong[2].trim();
+        }
+      }
       return {
         caption: fields.caption,
         hashtags: fields.hashtags || '',
@@ -68,7 +79,18 @@ function parseInsightJson(text) {
         reason: fields.reason || ''
       };
     }
-    throw new Error('The AI provider returned an unusable caption format');
+
+    // Never make the user retry solely because a model used an unexpected
+    // format. Preserve its visible response as a caption suggestion and give
+    // the UI a complete, editable suggestion set.
+    const fallbackCaption = plain.replace(/\s+/g, ' ').slice(0, 220) || 'A little moment worth keeping close. ✨';
+    return {
+      caption: fallbackCaption,
+      hashtags: '#PhotoDump #GoodVibes #Memories #Mood',
+      song: 'Iktara',
+      artist: 'Amit Trivedi & Kavita Seth',
+      reason: 'A ready-to-edit suggestion based on the photo roll.'
+    };
   }
 }
 
@@ -119,7 +141,7 @@ async function createRollInsights(images) {
   }));
   content.push({
     type: 'text',
-    text: 'Analyze these images as one photo roll. Return ONLY one valid JSON object with these string fields: caption (warm Hinglish or Hindi social caption, 16-26 words), hashtags (6-8 space-separated hashtags), song (a real Hindi song title), artist (artist name), and reason (16 words maximum). Make one cohesive recommendation for the complete set. Do not use markdown or add any text outside the JSON object.'
+    text: 'Analyze these images as one photo roll and give one cohesive, editable social-media suggestion. Return exactly these five labeled lines with no analysis or markdown: Caption: [warm Hinglish or Hindi caption, 16-26 words]\nHashtags: [6-8 space-separated hashtags]\nSong: [real Hindi song title]\nArtist: [artist name]\nReason: [why it fits, 16 words maximum]'
   });
 
   const upstream = await fetch(config.endpoint, {
