@@ -46,8 +46,29 @@ function parseInsightJson(text) {
   try { return JSON.parse(clean); }
   catch (_) {
     const match = clean.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error('The AI provider did not return JSON insights');
-    return JSON.parse(match[0]);
+    if (match) {
+      try { return JSON.parse(match[0]); }
+      catch (_) { /* Try the readable-label fallback below. */ }
+    }
+
+    // Some vision models answer with readable labels despite being asked for
+    // JSON. Accept that useful response instead of discarding the caption.
+    const fields = {};
+    clean.split(/\r?\n/).forEach(line => {
+      const normalized = line.replace(/\*\*/g, '').replace(/^\s*[-*]\s*/, '').trim();
+      const label = normalized.match(/^(caption|hashtags|song|artist|reason)\s*[:\-]\s*(.+)$/i);
+      if (label) fields[label[1].toLowerCase()] = label[2].trim().replace(/^['"]|['"]$/g, '');
+    });
+    if (fields.caption && fields.song) {
+      return {
+        caption: fields.caption,
+        hashtags: fields.hashtags || '',
+        song: fields.song,
+        artist: fields.artist || 'Artist not specified',
+        reason: fields.reason || ''
+      };
+    }
+    throw new Error('The AI provider returned an unusable caption format');
   }
 }
 
