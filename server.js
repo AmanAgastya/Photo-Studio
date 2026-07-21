@@ -54,7 +54,9 @@ function parseInsightJson(text) {
     // Some vision models answer with readable labels despite being asked for
     // JSON. Accept that useful response instead of discarding the caption.
     const fields = {};
-    const plain = clean.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/\*\*/g, '').trim();
+    // Never expose model reasoning. If a response starts a think block without
+    // closing it, discard that entire block rather than showing it as a caption.
+    const plain = clean.replace(/<think>[\s\S]*?(?:<\/think>|$)/gi, '').replace(/\*\*/g, '').trim();
     const labelPattern = /\b(caption|hashtags|song|artist|reason)\s*[:=-]\s*/gi;
     const labels = [...plain.matchAll(labelPattern)];
     labels.forEach((label, index) => {
@@ -83,13 +85,12 @@ function parseInsightJson(text) {
     // Never make the user retry solely because a model used an unexpected
     // format. Preserve its visible response as a caption suggestion and give
     // the UI a complete, editable suggestion set.
-    const fallbackCaption = plain.replace(/\s+/g, ' ').slice(0, 220) || 'A little moment worth keeping close. ✨';
     return {
-      caption: fallbackCaption,
+      caption: 'Collecting moments that feel like home. ✨',
       hashtags: '#PhotoDump #GoodVibes #Memories #Mood',
-      song: 'Iktara',
-      artist: 'Amit Trivedi & Kavita Seth',
-      reason: 'A ready-to-edit suggestion based on the photo roll.'
+      song: 'Kho Gaye Hum Kahan',
+      artist: 'Jasleen Royal & Prateek Kuhad',
+      reason: 'A ready-to-edit fallback suggestion for the photo roll.'
     };
   }
 }
@@ -150,7 +151,12 @@ async function createRollInsights(images) {
     body: JSON.stringify({
       model: config.model,
       messages: [{ role: 'user', content }],
-      ...(config.provider === 'Groq' ? { max_completion_tokens: 300 } : {})
+      ...(config.provider === 'Groq' ? {
+        max_completion_tokens: 300,
+        temperature: 0.8,
+        reasoning_effort: 'none',
+        reasoning_format: 'hidden'
+      } : {})
     })
   });
   const raw = await upstream.text();
