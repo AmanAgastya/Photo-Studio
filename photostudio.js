@@ -179,7 +179,7 @@
     const ctx = canvas.getContext('2d');
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
-    ctx.filter = 'contrast(1.045) saturate(1.08) brightness(1.015)';
+    ctx.filter = 'contrast(1.02) saturate(1.035) brightness(1)';
     ctx.drawImage(img, 0, 0, w, h);
     ctx.filter = 'none';
 
@@ -188,7 +188,7 @@
     autoLevels(imageData);
     liftShadowsAndPop(imageData);
     applyFilmTone(imageData);
-    sharpen(imageData, 0.28);
+    sharpen(imageData, 0.20);
     ctx.putImageData(imageData, 0, 0);
 
     const enhancedUrl = canvas.toDataURL('image/jpeg', 0.98);
@@ -211,7 +211,7 @@
     }
     if(!count) return;
     const average = (rTotal + gTotal + bTotal) / (3*count);
-    const limit = value => Math.max(.93, Math.min(1.07, value));
+    const limit = value => Math.max(.97, Math.min(1.03, value));
     const rScale = limit(average / (rTotal/count));
     const gScale = limit(average / (gTotal/count));
     const bScale = limit(average / (bTotal/count));
@@ -232,7 +232,8 @@
     for(let i=0; i<data.length; i+=4){
       histR[data[i]]++; histG[data[i+1]]++; histB[data[i+2]]++;
     }
-    const total = w*h, clip = total*0.002;
+    const total = w*h, clip = total*0.001;
+    const strength = 0.45;
     function bounds(hist){
       let lo=0, hi=255, count=0;
       for(let i=0;i<256;i++){ count+=hist[i]; if(count>clip){ lo=i; break; } }
@@ -243,9 +244,12 @@
     }
     const [rl,rh]=bounds(histR), [gl,gh]=bounds(histG), [bl,bh]=bounds(histB);
     for(let i=0;i<data.length;i+=4){
-      data[i]   = clampByte((data[i]-rl)   * 255/(rh-rl));
-      data[i+1] = clampByte((data[i+1]-gl) * 255/(gh-gl));
-      data[i+2] = clampByte((data[i+2]-bl) * 255/(bh-bl));
+      const r = (data[i]-rl) * 255/(rh-rl);
+      const g = (data[i+1]-gl) * 255/(gh-gl);
+      const b = (data[i+2]-bl) * 255/(bh-bl);
+      data[i]   = clampByte(data[i]   * (1-strength) + r * strength);
+      data[i+1] = clampByte(data[i+1] * (1-strength) + g * strength);
+      data[i+2] = clampByte(data[i+2] * (1-strength) + b * strength);
     }
   }
 
@@ -253,15 +257,15 @@
   // each pixel's own luminance, for a "more light, more pop" look.
   function liftShadowsAndPop(imageData){
     const data = imageData.data;
-    const gamma = 0.92, sat = 1.06, lift = 4;
+    const gamma = 0.98, sat = 1.025, lift = 1;
     for(let i=0; i<data.length; i+=4){
       let r = 255*Math.pow(data[i]/255, gamma) + lift;
       let g = 255*Math.pow(data[i+1]/255, gamma) + lift;
       let b = 255*Math.pow(data[i+2]/255, gamma) + lift;
       // Softly compress the very brightest values instead of clipping them.
-      r = r > 225 ? 225 + (r-225)*.55 : r;
-      g = g > 225 ? 225 + (g-225)*.55 : g;
-      b = b > 225 ? 225 + (b-225)*.55 : b;
+      r = r > 235 ? 235 + (r-235)*.72 : r;
+      g = g > 235 ? 235 + (g-235)*.72 : g;
+      b = b > 235 ? 235 + (b-235)*.72 : b;
       const lum = 0.299*r + 0.587*g + 0.114*b;
       data[i]   = clampByte(lum + (r-lum)*sat);
       data[i+1] = clampByte(lum + (g-lum)*sat);
@@ -549,12 +553,12 @@
       const shadow = Math.max(0, (105-lum)/105);
       const highlight = Math.max(0, (lum-150)/105);
       // Lift black point slightly, cool the shadows, and add amber warmth to highlights.
-      r = r*0.975 + 3.5 + 4.5*highlight - 1.5*shadow;
-      g = g*0.98 + 2.5 + 1.8*highlight + 0.8*shadow;
-      b = b*0.975 + 3 + 2.8*shadow - 2.2*highlight;
+      r = r*0.99 + 1.2 + 2.2*highlight - .7*shadow;
+      g = g*0.99 + .8 + .9*highlight + .3*shadow;
+      b = b*0.99 + 1 + 1.2*shadow - 1.0*highlight;
       const tonedLum = 0.299*r + 0.587*g + 0.114*b;
-      const saturation = 1.045;
-      const vignette = 1 - 0.13*Math.pow(Math.sqrt((x-cx)*(x-cx) + (y-cy)*(y-cy))/maxDist, 1.65);
+      const saturation = 1.015;
+      const vignette = 1 - 0.055*Math.pow(Math.sqrt((x-cx)*(x-cx) + (y-cy)*(y-cy))/maxDist, 1.65);
       data[i] = clampByte((tonedLum + (r-tonedLum)*saturation) * vignette);
       data[i+1] = clampByte((tonedLum + (g-tonedLum)*saturation) * vignette);
       data[i+2] = clampByte((tonedLum + (b-tonedLum)*saturation) * vignette);
