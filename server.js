@@ -4,35 +4,21 @@ const path = require('path');
 
 const root = __dirname;
 const MAX_BODY_BYTES = 15 * 1024 * 1024;
+const STATIC_FILES = new Set(['photostudio.html', 'photostudio.css', 'photostudio.js']);
 
-// Keeps local development configuration out of source control, without adding
-// a package dependency for this small static server.
 function loadLocalEnv() {
   try {
     fs.readFileSync(path.join(root, '.env'), 'utf8').split(/\r?\n/).forEach(line => {
       const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
       if (match && !process.env[match[1]]) process.env[match[1]] = match[2].replace(/^['"]|['"]$/g, '');
     });
-  } catch (_) { /* .env is optional in hosted environments */ }
+  } catch (_) { /* Environment variables are supplied by Vercel in production. */ }
 }
 loadLocalEnv();
-
-function serveFile(res, filePath, contentType) {
-fs.readFile(filePath, (err, data) => {
-    if (err) {
-    res.writeHead(404, { 'Content-Type': 'text/plain' });
-    res.end('Not found');
-    return;
-    }
-    res.writeHead(200, { 'Content-Type': contentType });
-    res.end(data);
-});
-}
 
 function sendJson(res, status, data) {
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
-    // Generated captions and songs must never be reused for another roll.
     'Cache-Control': 'no-store'
   });
   res.end(JSON.stringify(data));
@@ -62,28 +48,66 @@ function outputText(data) {
     .map(item => item.text || '').join('\n');
 }
 
+function parseInsightJson(text) {
+  const clean = text.trim().replace(/^```(?:json)?\s*|\s*```$/g, '');
+  try { return JSON.parse(clean); }
+  catch (_) {
+    const match = clean.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error('Grok did not return JSON insights');
+    return JSON.parse(match[0]);
+  }
+}
+
+function grokError(status) {
+  if (status === 401 || status === 403) return 'Grok authentication failed. Set XAI_API_KEY to a valid xAI API key (not a Groq gsk_ key).';
+  if (status === 429) return 'Grok rate limit or account quota reached. Please try again shortly.';
+  if (status === 404) return 'The configured Grok model is unavailable. Check GROK_MODEL or remove it to use grok-4.5.';
+  return `Grok API request failed (${status}). Check the Vercel function logs for details.`;
+}
+
 async function createRollInsights(images) {
-  const apiKey = process.envgsk_X0CK5W476zImKwcdsUUXWGdyb3FYFfyhR79SjBpAtfJ07RdiQo27 || process.env.GROK_API_KEY;
+  const apiKey = process.env.XAI_API_KEY || process.env.GROK_API_KEY;
   if (!apiKey) throw new Error('Missing XAI_API_KEY or GROK_API_KEY on the server');
+  if (apiKey.startsWith('gsk_')) throw new Error('Grok requires an xAI API key. The configured gsk_ key belongs to Groq and cannot call api.x.ai.');
+
   const content = [{
     type: 'input_text',
-    text: 'Analyze these images as one group photo roll. Return ONLY valid JSON with these string fields: caption (a warm Hinglish or Hindi social caption, 16-26 words), hashtags (6-8 space-separated hashtags), song (a real Hindi song title), artist (the artist name), reason (a concise reason, 16 words maximum). Make one cohesive recommendation for the entire set, not one per image.'
+    text: 'Analyze these images as one photo roll. Return ONLY valid JSON with string fields caption (warm Hinglish or Hindi social caption, 16-26 words), hashtags (6-8 space-separated hashtags), song (a real Hindi song title), artist (artist name), and reason (16 words maximum). Make one cohesive recommendation for the complete set.'
   }];
   images.forEach(image => content.push({ type: 'input_image', image_url: image, detail: 'low' }));
+
   const upstream = await fetch('https://api.x.ai/v1/responses', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ model: process.env.GROK_MODEL || 'grok-4.5', input: [{ role: 'user', content }], max_output_tokens: 300 })
+    body: JSON.stringify({
+      model: process.env.GROK_MODEL || 'grok-4.5',
+      input: [{ role: 'user', content }],
+      max_output_tokens: 300
+    })
   });
-  if (!upstream.ok) throw new Error(`Grok API returned ${upstream.status}`);
-  const text = outputText(await upstream.json()).trim().replace(/^```json\s*|\s*```$/g, '');
-  const result = JSON.parse(text);
+  const raw = await upstream.text();
+  if (!upstream.ok) {
+    console.error('Grok upstream response:', upstream.status, raw.slice(0, 500));
+    throw new Error(grokError(upstream.status));
+  }
+  let responseData;
+  try { responseData = JSON.parse(raw); }
+  catch (_) { throw new Error('Grok returned an unreadable response'); }
+  const result = parseInsightJson(outputText(responseData));
   if (!result.caption || !result.song || !result.artist) throw new Error('Grok returned an incomplete result');
   return result;
 }
 
+function serveFile(res, filePath, contentType) {
+  fs.readFile(filePath, (err, data) => {
+    if (err) { res.writeHead(404, { 'Content-Type': 'text/plain' }); res.end('Not found'); return; }
+    res.writeHead(200, { 'Content-Type': contentType });
+    res.end(data);
+  });
+}
+
 async function handler(req, res) {
-  if (req.method === 'POST' && req.url === '/api/roll-insights') {
+  if (req.method === 'POST' && req.url.split('?')[0] === '/api/roll-insights') {
     try {
       const { images } = await readJson(req);
       if (!Array.isArray(images) || !images.length || images.length > 8 || images.some(image => typeof image !== 'string' || !/^data:image\/(jpeg|png);base64,/.test(image))) {
@@ -94,33 +118,21 @@ async function handler(req, res) {
       console.error('Roll insights error:', error.message);
       const isConfigError = error.message.startsWith('Missing XAI_API_KEY') || error.message.startsWith('Missing GROK_API_KEY');
       return sendJson(res, isConfigError ? 500 : 502, {
-        error: isConfigError ? 'Grok is not configured. Add XAI_API_KEY in Vercel environment variables.' : 'Grok could not generate roll insights. Please try again.'
+        error: isConfigError ? 'Grok is not configured. Add XAI_API_KEY in Vercel environment variables.' : error.message
       });
     }
   }
+
   const pathname = decodeURIComponent(req.url.split('?')[0]);
   const requested = pathname === '/' ? 'photostudio.html' : pathname.replace(/^\//, '');
-  const filePath = path.join(root, requested);
-  if (!filePath.startsWith(root + path.sep) || !['photostudio.html', 'photostudio.css', 'photostudio.js'].includes(requested)) {
-    res.writeHead(404, { 'Content-Type': 'text/plain' }); res.end('Not found'); return;
-  }
-  const ext = path.extname(filePath).toLowerCase();
-  const contentType = {
-    '.html': 'text/html; charset=utf-8',
-    '.css': 'text/css; charset=utf-8',
-    '.js': 'application/javascript; charset=utf-8',
-    '.json': 'application/json; charset=utf-8'
-  }[ext] || 'application/octet-stream';
-
-  serveFile(res, filePath, contentType);
+  if (!STATIC_FILES.has(requested)) { res.writeHead(404, { 'Content-Type': 'text/plain' }); res.end('Not found'); return; }
+  const ext = path.extname(requested).toLowerCase();
+  const contentType = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'application/javascript; charset=utf-8' }[ext];
+  serveFile(res, path.join(root, requested), contentType);
 }
 
-// Vercel invokes the exported handler. Locally, retain the convenient static
-// server entry point with `node server.js`.
 module.exports = handler;
 
 if (require.main === module) {
-  http.createServer(handler).listen(3000, () => {
-    console.log('Server running at http://localhost:3000');
-  });
+  http.createServer(handler).listen(3000, () => console.log('Server running at http://localhost:3000'));
 }
